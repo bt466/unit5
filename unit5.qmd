@@ -1,0 +1,237 @@
+---
+title: "Unit 5: _Actual_ Data"
+format: html
+editor: visual
+echo: true
+---
+
+## In The Previous Units
+
+-   Creating reports/notebooks with Quarto in RStudio
+
+-   Generating basic descriptive data
+
+-   Basic data frame manipulation
+
+-   Visualizing columns with ggplot
+
+## In This Unit
+
+-   Reading/writing data frames
+
+-   Joining different data frames
+
+-   Advanced data manipulation
+
+-   Date/datetime data
+
+-   Dealing with quality issues
+
+    -   missing data
+
+-   Parsing with regular expression
+
+## The Flights Data
+
+The Department of Transportation released a [dataset](https://www.kaggle.com/usdot/flight-delays/download) that lists 5.8M flights that occurred in 2015, along with delays, flight time and other information. The same is also uploaded to Canvas.
+
+Download the dataset so you may follow along.\
+I've already downloaded the `.zip` file, and manually extracted the contents to `/flights` folder.
+
+Let's take a look.
+
+```{r}
+list.files("flights") 
+```
+
+There seems to be three `csv` files. We need to read these into R environment in order to see the content.
+
+```{r}
+library(magrittr)
+flights <- 
+  purrr::map(list.files("flights", 
+                        full.names = TRUE), 
+             # this argument to provide full path of files for reading 
+             ~ suppressMessages(readr::read_csv(.))) %>% 
+  set_names(stringr::str_remove(list.files("flights"), 
+                                "\\.csv")) # this is a regex
+  
+names(flights)
+```
+
+It may take a while. But when it's done, `flights` is a list of three data frames.
+
+`readr::read_csv` gives off a lot of information in the console as it works to read the data, for the sake of brevity in this document, we turned it off with `suppressMessages`().
+
+The `"^.*\\.csv"` part in `stringr::stringr_remove()` is a regular expression. It's used to extract the file name without the "csv" extension name.
+
+## Take a `glimpse()`
+
+...to see what's what in our data.
+
+```{r}
+library(dplyr)
+flights$airlines %>% glimpse()
+```
+
+This is the airline code with corresponding company names, such mapping is commonly called a *code list*.
+
+```{r}
+flights$airports %>% glimpse()
+```
+
+Another side of the operation: airport information with location data.
+
+```{r}
+flights$flights %>% glimpse()
+```
+
+This is a huge dataset with transactional data. There are so many columns, we won't look at each of them now; however, every row is apparently a record of a flight taken place.
+
+## Cleaning Names
+
+We can see from below that the column names are CAPITALIZED. This is very common in past/legacy systems.
+
+```{r}
+suppressMessages(library(purrr))
+map(flights, 
+    names)
+```
+
+Generally, it's a good idea nowadays to use lower case names.
+
+```{r}
+flights <- map(flights, 
+               janitor::clean_names)
+```
+
+`janitor:clean_names()` does more than just lower-casing, if your column names are dirtier.
+
+```{r}
+map(flights, 
+    names)
+```
+
+It seems that the main chunk of information is in `flights` .
+
+## What information does `flight` contain?
+
+Below we make an attempt to categorize different columns included within the data.
+
+### **Temporal**
+
+-   **`year`**, **`month`**, **`day`**, **`day_of_week`**: These provide information about the date and time of the flight, useful for analyzing temporal trends and patterns on different levels of granularity.
+
+    -   `year`, `month`, `day` constitutes a `date`, and day-of-week can be inferred with date and calendar
+
+    -   We can also derive week numbers from this.
+
+    -   Time information can connect us to events, such as holidays.
+
+### **Flight Identification**
+
+-   **`airline`**: Identifies the airline operating the flight
+
+-   **`flight_number`**: A unique identifier for each flight
+
+-   **`tail_number`**: Identifies individual aircraft, which can be useful for analyses at the aircraft level. "Are certain aircrafts less reliable?" etc
+
+### **Airport**
+
+-   **`origin_airport`**, **`destination_airport`**: Indicate the starting and ending points of flights
+
+    -   We have more detailed geographic information in `airports` dataset
+
+### **Schedule and Timing Variables**
+
+-   **`scheduled_departure`**, **`departure_time`**, **`scheduled_arrival`**, **`arrival_time`**: Provide scheduled and actual times for departures and arrivals, key for on-time performance and delay analyses.
+
+-   **`departure_delay`**, **`arrival_delay`**: Directly quantify delays in departure and arrival, central to delay studies.
+
+    -   Perhaps derived from the above scheduled and actual times?
+
+-   **`scheduled_time`**, **`elapsed_time`**, **`air_time`**: Relate to the duration of the flight, with **`scheduled_time`** being the planned duration (which should be able to be calculated with scheduled times), **`elapsed_time`** the actual duration, and **`air_time`** the time spent in the air.
+
+### **Operational Efficiency & Performance Outcome**
+
+-   **`taxi_out`**, **`wheels_off`**, **`wheels_on`**, **`taxi_in`**: Provide detailed timing on ground operations before takeoff and after landing, useful for assessing airport efficiency and ground control effectiveness. The plane is not taking the passengers closer to where they need to be if it's on the ground!
+
+-   **`diverted`**, **`cancelled`**: Indicate whether a flight was diverted to a different airport or cancelled, important for understanding flight reliability and operational challenges.
+
+-   **`cancellation_reason`**: Provides the reason for flight cancellations, essential for identifying common factors leading to cancellations.
+
+#### **Delay Reason**
+
+-   **`air_system_delay`**, **`security_delay`**, **`airline_delay`**, **`late_aircraft_delay`**, **`weather_delay`**: Break down the reasons for delays into specific categories, enabling a nuanced analysis of delay causes.
+
+## A closer look
+
+Use the `skimr` package to get more information.
+
+```{r}
+skimming <- suppressMessages(skimr::partition(skimr::skim(flights$flights)))
+```
+
+```{r}
+skimming$character
+```
+
+```{r}
+skimming$numeric
+```
+
+Note that `summary()` and `skimr::skim()` infers upon categorical columns differently.
+
+#### Completeness/Missingness
+
+Missing data that could impact the depth and accuracy of analyses without proper handling.
+
+-   The completeness of data is high (98%+ )
+
+    -   Except for a few **columns on delay reasons** that are more uniformly at \~18 %
+
+    -   Probably due to these columns started being collected later
+
+-   These missing observations (rows) can be safely removed for most downstream analyses
+
+    -   However, we can investigate the pattern of the missingness
+
+### Data Types
+
+Some categorical variables are coded as numbers.
+
+-   It may be beneficial to turn them into factors
+
+-   Some algorithm will need these as numbers, especially 0/1 binary data
+
+    -   it's easy to turn them back to numbers
+
+## Potential Downstream Analyses
+
+Before starting coding to clean these data, it's a good idea to think about what direction can we go next. With the above available columns, we can try to formulate ideas surrounding potential analyses. Exploratory analysis is an iterative process to find out what's interesting and to pursue deeper insights.
+
+The first step is always to **describe** a column, potentially segmenting by other columns.
+
+### Market Share
+
+-   **Flight Volume**: Number of flights operated by each airline; give a basic idea of market presence in terms of operational volume.
+
+-   **Route Diversity**: How many unique routes (defined by origin/destination airport codes) each airline serves; This can indicate the diversity of an airline's network and its geographical reach.
+
+### **Performance**
+
+-   **On-Time**: What percentage of flights depart and arrive on time, and how does this vary by airline, month, or day of the week?
+
+-   **Delays and Cancellations**: What percentage of flights are delayed or cancelled?
+
+    -   How does it vary across different airlines or airports?
+
+    -   Which routes are most prone to delays or cancellations?
+
+## Questions
+
+-   This is a huge dataset; what are some other questions you can come up with?
+
+-   Can you identify which columns are necessary to answer the above?
+
+-   Can you try to use `ggplot` to visualize the above?
